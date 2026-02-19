@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sistema Industrial</title>
+
+<script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
+
+<style>
+body { margin:0; font-family: Arial, sans-serif; background: linear-gradient(135deg, #1e3c72, #2a5298); color:white; }
+nav { display:flex; justify-content:center; gap:40px; padding:20px; background: rgba(0,0,0,0.3); backdrop-filter: blur(10px);}
+nav button { background:none; border:none; color:white; font-weight:bold; cursor:pointer; font-size:15px; transition:0.3s;}
+nav button:hover { color:#ffd700;}
+.seccion { display:none; padding:40px; text-align:center; color:black; background:white; margin:20px; border-radius:10px;}
+.activa { display:block;}
+table { border-collapse: collapse; width: 100%; margin-top:10px;}
+th, td { border:1px solid #333; padding:5px; text-align:center; font-size:12px; }
+h2, h3, h4 { margin-top:15px; }
+.resumen-box { background:#f0f0f0; padding:10px; border-radius:10px; text-align:center; color:black; margin-bottom:15px; }
+.total-row { font-weight:bold; background:#dcdcdc; }
+button.reasignar-btn { margin:15px; padding:10px 20px; font-size:14px; font-weight:bold; cursor:pointer; background:#2a5298; color:white; border:none; border-radius:5px;}
+button.reasignar-btn:hover { background:#1e3c72;}
+</style>
+</head>
+<body>
+
+<nav>
+    <button onclick="mostrarSeccion('distribucion')">DISTRIBUCION</button>
+    <button onclick="mostrarSeccion('stock')">STOCK</button>
+    <button onclick="mostrarSeccion('extrusion')">EXTRUSION</button>
+    <button onclick="mostrarSeccion('hornos')">HORNOS</button>
+    <button onclick="mostrarSeccion('pintura')">PINTURA</button>
+</nav>
+
+<!-- SECCIÓN DISTRIBUCIÓN -->
+<div id="distribucion" class="seccion activa">
+    <h1>Distribución</h1>
+    <p>Sube tu archivo Excel para procesar PLANTA y LINEA</p>
+    <input type="file" id="inputExcelDistribucion" accept=".xlsx"><br><br>
+
+    <div id="resumenTablasDistribucion"></div>
+
+    <h2>Datos completos</h2>
+    <table id="tablaDistribucion"></table>
+</div>
+
+<!-- SECCIÓN STOCK -->
+<div id="stock" class="seccion">
+    <h1>Stock vs Distribución</h1>
+    <p>Sube tu Excel de Stock y se comparará con Distribución usando DIEMUN</p>
+    <input type="file" id="inputExcelStock" accept=".xlsx"><br><br>
+
+    <button class="reasignar-btn" onclick="reasignarStock()">Reasignar</button>
+
+    <h2>Stock disponible para reasignar</h2>
+    <table id="tablaStockReasignable"></table>
+
+    <h2>Stock original restante</h2>
+    <table id="tablaStockOriginal"></table>
+</div>
+
+<div id="extrusion" class="seccion"><h1>Extrusión</h1></div>
+<div id="hornos" class="seccion"><h1>Hornos</h1></div>
+<div id="pintura" class="seccion"><h1>Pintura</h1></div>
+
+<script>
+function mostrarSeccion(id){
+    document.querySelectorAll('.seccion').forEach(sec => sec.classList.remove('activa'));
+    document.getElementById(id).classList.add('activa');
+}
+
+// ------------------ Diccionarios Distribución ------------------
+const diccionario_p = {"PRENSA 4": "A1", "PRENSA 7-3": "A1", "PRENSA 7-2":"A1","PRENSA 7-1":"A1","PRENSA 9":"A1","PRENSA 5":"A1","PRENSA 10": "A3","PRENSA 7-5":"A3","PRENSA 7-4":"A3","PRENSA 9-2":"A3"};
+const diccionario_a = {"Durastar Cyberspace": "H4", "Duranar Renaissance Silver": "H2", "NA":"NA"};
+const lista = {"Duranar Arcadia Silver": ["H2","H4"], "Duranar Bermuda Bronze":["H2","H4"]};
+
+// ------------------ Funciones comunes ------------------
+function parseNumber(valor){ return parseFloat(valor.toString().replace(",", ".")) || 0; }
+function crearTablaHTML(datos, tablaID){
+    const tabla = document.getElementById(tablaID);
+    tabla.innerHTML = "";
+    if(datos.length>0){
+        const cabecera = Object.keys(datos[0]);
+        let filaHTML = "<tr>";
+        cabecera.forEach(c => filaHTML += `<th>${c}</th>`);
+        filaHTML += "</tr>";
+        tabla.innerHTML += filaHTML;
+        datos.forEach(row => {
+            let filaHTML = "<tr>";
+            cabecera.forEach(c => filaHTML += `<td>${row[c] !== undefined ? row[c] : ""}</td>`);
+            filaHTML += "</tr>";
+            tabla.innerHTML += filaHTML;
+        });
+    }
+}
+
+// ------------------ DISTRIBUCIÓN ------------------
+let distribucionData = [];
+
+document.getElementById("inputExcelDistribucion").addEventListener("change", function(e){
+    const archivo = e.target.files[0];
+    const reader = new FileReader();
+    reader.onload = function(event){
+        const data = new Uint8Array(event.target.result);
+        const workbook = XLSX.read(data, {type:'array'});
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        distribucionData = XLSX.utils.sheet_to_json(sheet, {defval:""});
+
+        distribucionData.forEach(row => {
+            row["PLANTA"] = diccionario_p[row["PRENSA"]] || "";
+            const acabado = row["FINISH"];
+            const peso = parseNumber(row["PESO LINEAL"]);
+            const len = parseNumber(row["LEN"]);
+            if(diccionario_a[acabado]){
+                row["LINEA"] = diccionario_a[acabado];
+            } else if(peso < 0.6 && len <= 7.4){
+                row["LINEA"] = "VERT";
+            } else if(row["PLANTA"] === "A1" && lista[acabado]){
+                row["LINEA"] = lista[acabado][0];
+            } else if(row["PLANTA"] === "A3" && lista[acabado]){
+                row["LINEA"] = lista[acabado][1];
+            } else {
+                row["LINEA"] = "";
+            }
+        });
+
+        crearTablaHTML(distribucionData, "tablaDistribucion");
+    };
+    reader.readAsArrayBuffer(archivo);
+});
+
+// ------------------ STOCK ------------------
+let stockOriginal = [];
+let stockReasignable = [];
+document.getElementById("inputExcelStock").addEventListener("change", function(e){
+    if(distribucionData.length === 0){
+        alert("Primero carga el archivo de Distribución.");
+        return;
+    }
+    const archivo = e.target.files[0];
+    const reader = new FileReader();
+    reader.onload = function(event){
+        const data = new Uint8Array(event.target.result);
+        const workbook = XLSX.read(data, {type:'array'});
+        const sheet = workbook.Sheets[workbook.SheetNames[0]];
+        stockOriginal = XLSX.utils.sheet_to_json(sheet, {defval:""});
+        // Inicialmente, toda la info para reasignar
+        stockReasignable = JSON.parse(JSON.stringify(stockOriginal));
+        crearTablaHTML(stockReasignable, "tablaStockReasignable");
+        crearTablaHTML(stockOriginal, "tablaStockOriginal");
+    };
+    reader.readAsArrayBuffer(archivo);
+});
+
+// ------------------ Función Reasignar ------------------
+function reasignarStock(){
+    if(stockOriginal.length === 0 || distribucionData.length === 0){
+        alert("Carga primero Distribución y Stock.");
+        return;
+    }
+
+    const resultadoReasignado = [];
+    const stockRestante = [];
+
+    // Creamos un map de DIEMUN → órdenes pendientes de distribución
+    const distribMap = {};
+    distribucionData.forEach(ord => {
+        const diem = ord["DIEMUN"];
+        if(!distribMap[diem]) distribMap[diem] = [];
+        distribMap[diem].push({...ord, PZSAsignadasTotales:0});
+    });
+
+    // Recorremos cada fila de Stock original
+    stockOriginal.forEach(stock => {
+        let stockDisponible = parseNumber(stock["PIEZAS"]);
+        const diem = stock["DIEMUN"];
+        const ordenesPendientes = distribMap[diem] || [];
+
+        if(ordenesPendientes.length === 0){
+            // Nada que reasignar
+            stockRestante.push(stock);
+        } else {
+            let primeraFila = true;
+            ordenesPendientes.forEach(ord => {
+                if(stockDisponible <= 0) return;
+                const pzsPedido = parseNumber(ord["PZS"]);
+                const pzsRestante = pzsPedido - (ord.PZSAsignadasTotales || 0);
+                if(pzsRestante <= 0) return;
+
+                const asignar = Math.min(stockDisponible, pzsRestante);
+
+                if(primeraFila){
+                    resultadoReasignado.push({
+                        ...stock,
+                        "SOITEM": ord["SOITEM"],
+                        "FINISH": ord["FINISH"],
+                        "PZS Asignadas": asignar
+                    });
+                    stockDisponible -= asignar;
+                    ord.PZSAsignadasTotales = (ord.PZSAsignadasTotales || 0) + asignar;
+                    primeraFila = false;
+                } else {
+                    resultadoReasignado.push({
+                        "DIEMUN":"", "PIEZAS":"", "SOITEM":ord["SOITEM"], "FINISH":ord["FINISH"], "PZS Asignadas":asignar
+                    });
+                    stockDisponible -= asignar;
+                    ord.PZSAsignadasTotales = (ord.PZSAsignadasTotales || 0) + asignar;
+                }
+            });
+
+            // Stock restante después de reasignar
+            const restante = {...stock};
+            restante["PIEZAS"] = stockDisponible;
+            stockRestante.push(restante);
+        }
+    });
+
+    crearTablaHTML(resultadoReasignado, "tablaStockReasignable");
+    crearTablaHTML(stockRestante, "tablaStockOriginal");
+
+    // Actualizamos stockOriginal con el stock restante para futuras reasignaciones
+    stockOriginal = stockRestante;
+}
+</script>
+</body>
+</html>
